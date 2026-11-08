@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Landmark Chess</title>
+  <meta name="description" content="3D chess in the Oval Office, the Titanic wreck and atop the Statue of Liberty. Play the computer or a friend anywhere in the world." />
+  <meta name="theme-color" content="#0d1424" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%99%9B%3C/text%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script type="importmap">
+  { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  } }
+  </script>
+</head>
+<body>
+  <div id="stage"></div>
+
+  <header id="topbar">
+    <div class="brand"><span class="crown">♛</span> Landmark <b>Chess</b></div>
+    <nav id="venuePills"></nav>
+    <div class="tools">
+      <button id="btnSound" class="icon" title="Sound on/off">🔊</button>
+      <button id="btnQuality" class="icon" title="Graphics quality">✨</button>
+      <button id="btnMenu" class="pill">Menu</button>
+    </div>
+  </header>
+
+  <aside id="panel" class="hidden">
+    <div class="player" id="pTop"><span class="dot"></span><span class="pname">Opponent</span><span class="caps"></span><span class="clock"></span></div>
+    <div id="status">White to move</div>
+    <ol id="moves"></ol>
+    <div class="player" id="pBottom"><span class="dot"></span><span class="pname">You</span><span class="caps"></span><span class="clock"></span></div>
+    <div class="actions">
+      <button id="btnUndo">↶ Undo</button>
+      <button id="btnHint">💡 Hint</button>
+      <button id="btnFlip">⟲ Flip</button>
+      <button id="btnDraw">½ Draw</button>
+      <button id="btnResign" class="danger">⚑ Resign</button>
+    </div>
+    <div id="chat" class="hidden">
+      <div id="chatLog"></div>
+      <div class="emotes"><button>👍</button><button>😂</button><button>😮</button><button>🔥</button><button>🤝</button><button>GG</button></div>
+      <form id="chatForm"><input id="chatInput" maxlength="140" placeholder="Say something…" autocomplete="off" /><button>Send</button></form>
+    </div>
+  </aside>
+
+  <section id="menu" class="overlay">
+    <div class="card menu-card">
+      <h1><span class="crown">♛</span> Landmark Chess</h1>
+      <p class="tag">Pick a legendary spot. Pick an opponent. Play.</p>
+      <h3>Where do you want to play?</h3>
+      <div id="venueCards" class="venues"></div>
+      <div class="tabs" role="tablist">
+        <button data-tab="cpu" class="active">🤖 vs Computer</button>
+        <button data-tab="online">🌎 Online Friend</button>
+        <button data-tab="local">👥 Same Device</button>
+      </div>
+
+      <div class="tab" id="tab-cpu">
+        <label class="row">Difficulty <b id="lvlName">Club</b></label>
+        <input type="range" id="lvl" min="1" max="9" value="4" />
+        <div class="seg" id="colorPick"><button data-c="w" class="active">♔ White</button><button data-c="r">🎲 Random</button><button data-c="b">♚ Black</button></div>
+        <button class="go" id="startCpu">Start Game</button>
+      </div>
+
+      <div class="tab hidden" id="tab-online">
+        <label class="row">Your name</label>
+        <input id="myName" maxlength="18" placeholder="Player" />
+        <div class="split">
+          <div>
+            <button class="go" id="hostBtn">Create a game</button>
+            <div id="hostBox" class="hidden">
+              <p class="small">Send this link to your friend:</p>
+              <div class="code" id="roomCode">------</div>
+              <div class="copyrow"><input id="roomLink" readonly /><button id="copyLink">Copy</button><button id="shareLink">Share</button></div>
+              <p class="small wait"><span class="spin"></span> Waiting for your friend to join…</p>
+            </div>
+          </div>
+          <div>
+            <div class="joinrow"><input id="joinCode" maxlength="6" placeholder="CODE" /><button class="go" id="joinBtn">Join</button></div>
+            <p class="small" id="netMsg"></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab hidden" id="tab-local">
+        <p class="small">Two players, one screen. The board turns to face whoever's move it is.</p>
+        <label class="check"><input type="checkbox" id="autoFlip" checked /> Turn the board each move</label>
+        <button class="go" id="startLocal">Start Game</button>
+      </div>
+      <button id="resumeBtn" class="link hidden">Back to current game ›</button>
+    </div>
+  </section>
+
+  <section id="promo" class="overlay hidden">
+    <div class="card small-card"><h3>Promote to…</h3><div class="promo-btns"><button data-p="q">♛</button><button data-p="r">♜</button><button data-p="b">♝</button><button data-p="n">♞</button></div></div>
+  </section>
+
+  <section id="result" class="overlay hidden">
+    <div class="card small-card"><div class="trophy" id="resIcon">🏆</div><h2 id="resTitle">Checkmate!</h2><p id="resText"></p>
+      <div class="row-btns"><button class="go" id="rematchBtn">Rematch</button><button id="resMenuBtn">Menu</button><button id="resViewBtn" class="link">View board</button></div></div>
+  </section>
+
+  <div id="toast"></div>
+  <div id="loading"><div class="crown big">♛</div><div>Setting the board…</div></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
