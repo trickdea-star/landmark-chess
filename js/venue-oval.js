@@ -1,7 +1,8 @@
 // Venue: a stately oval office (generic, no official seals).
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { canvasTex, std, phys, mesh, keyLight, woodTex, rand } from './vutil.js';
+import { canvasTex, std, phys, mesh, keyLight, rand } from './vutil.js';
+import { pbrMat } from './assets.js';
 
 const FLOOR = -4.2, RX = 44, RZ = 35, H = 40;
 
@@ -117,18 +118,26 @@ function flagCloth(tex) {
   return m;
 }
 
-export function buildOval() {
+export async function buildOval() {
   const g = new THREE.Group();
-  const cream = std('#efe3c8', 0.85), white = std('#f7f2e6', 0.6), gold = phys('#c9a24a', 0.32, 0.85);
-  const mahogany = phys('#4a2414', 0.35, 0, { clearcoat: 0.8, clearcoatRoughness: 0.2 });
+  const white = std('#f7f2e6', 0.6), gold = phys('#c9a24a', 0.32, 0.85);
+  // real photo-scanned materials (Poly Haven, CC0)
+  const [parquet, cream, wainMat, mahogany, uph, leather] = await Promise.all([
+    pbrMat('herringbone_parquet', { repeat: [14, 14], roughness: 0.8 }),
+    pbrMat('painted_plaster_wall', { repeat: [30, 5], arm: false, color: '#f3e6c8', roughness: 0.92, normalScale: 0.6 }),
+    pbrMat('painted_plaster_wall', { repeat: [30, 1], arm: false, color: '#fbf3e2', roughness: 0.65, normalScale: 0.4 }),
+    pbrMat('rosewood_veneer1', { physical: true, repeat: [2, 2], color: '#b07a62', roughness: 0.6, clearcoat: 0.5, clearcoatRoughness: 0.35 }),
+    pbrMat('quatrefoil_jacquard_fabric', { physical: true, repeat: [3, 3], color: '#f1dda4', roughness: 1, sheen: 0.7, sheenColor: '#fff2c4' }),
+    pbrMat('brown_leather', { physical: true, repeat: [2, 2], color: '#5a3c2e', roughness: 0.75, clearcoat: 0.35 }),
+  ]);
 
   // floor, carpet, walls, ceiling
-  mesh(new THREE.PlaneGeometry(110, 110).rotateX(-Math.PI / 2), std('#8a5a33', 0.45, 0, { map: woodTex('#8a5a33', '#3a2010', { planks: 8, repeat: [10, 10] }) }), { y: FLOOR, cast: false, parent: g });
+  mesh(new THREE.PlaneGeometry(110, 110).rotateX(-Math.PI / 2), parquet, { y: FLOOR, cast: false, parent: g });
   const carpet = mesh(new THREE.CircleGeometry(1, 128).rotateX(-Math.PI / 2), std('#ffffff', 0.95, 0, { map: carpetTex() }), { y: FLOOR + 0.03, cast: false, parent: g });
   carpet.scale.set(33, 1, 26);
   const wall = mesh(new THREE.CylinderGeometry(1, 1, H, 160, 1, true), cream, { y: FLOOR + H / 2, cast: false, parent: g });
-  wall.material.side = THREE.BackSide; wall.scale.set(RX, 1, RZ);
-  const wains = mesh(new THREE.CylinderGeometry(1, 1, 8, 160, 1, true), std('#f6eedb', 0.6, 0, { side: THREE.BackSide }), { y: FLOOR + 4, cast: false, parent: g });
+  cream.side = THREE.BackSide; wainMat.side = THREE.BackSide; wall.scale.set(RX, 1, RZ);
+  const wains = mesh(new THREE.CylinderGeometry(1, 1, 8, 160, 1, true), wainMat, { y: FLOOR + 4, cast: false, parent: g });
   wains.scale.set(RX - 0.25, 1, RZ - 0.25);
   for (const [y, r] of [[FLOOR + 8, 0.35], [FLOOR + 0.5, 0.5], [FLOOR + H - 0.8, 1.0], [FLOOR + H - 2.4, 0.45]]) {
     mesh(new THREE.TubeGeometry(new Ellipse3(RX - 0.3, RZ - 0.3, y), 240, r, 8, true), white, { cast: false, parent: g });
@@ -143,7 +152,7 @@ export function buildOval() {
   ceil.scale.set(RX, 1, RZ);
 
   // windows + drapes on the far (south) wall
-  const winMat = new THREE.MeshBasicMaterial({ map: windowTex(), color: new THREE.Color(2.4, 2.4, 2.4) });
+  const winMat = new THREE.MeshBasicMaterial({ map: windowTex(), color: new THREE.Color(1.7, 1.7, 1.7) });
   const drapeMat = phys('#c49a3e', 0.42, 0.2, { side: THREE.DoubleSide, sheen: 1, sheenColor: '#ffe7a3' });
   for (const a of [-Math.PI / 2 - 0.36, -Math.PI / 2, -Math.PI / 2 + 0.36]) {
     const p = onWall(a, 0.985), ry = faceCenter(p);
@@ -172,7 +181,6 @@ export function buildOval() {
   for (const x of [-4.6, 4.6]) mesh(new THREE.BoxGeometry(3.6, 3.6, 0.2), phys('#3a1b0e', 0.4), { x, y: 2.6, z: 3.35, parent: desk });
   mesh(new THREE.TorusGeometry(1.1, 0.12, 12, 40), gold, { y: 2.8, z: 3.38, parent: desk });
   mesh(new THREE.BoxGeometry(1.4, 0.9, 0.9), std('#1b1b1b', 0.4), { x: -4, y: 6.1, z: 1, parent: desk });
-  const leather = phys('#1d1512', 0.45, 0, { clearcoat: 0.4 });
   mesh(new RoundedBoxGeometry(4.6, 1.2, 4.2, 3, 0.4), leather, { y: 3, z: -5.5, parent: desk });
   mesh(new RoundedBoxGeometry(4.8, 7, 1, 3, 0.4), leather, { y: 6.6, z: -7.4, parent: desk });
 
@@ -201,8 +209,6 @@ export function buildOval() {
   mesh(new THREE.PlaneGeometry(7.4, 9.4), std('#ffffff', 0.8, 0, { map: paintingTex() }), { y: 18, z: 0.48, cast: false, parent: fp });
 
   // sofas + coffee table
-  const stripe = canvasTex(64, 64, (c, w) => { c.fillStyle = '#efe0b6'; c.fillRect(0, 0, w, w); c.fillStyle = '#cfae63'; c.fillRect(0, 0, 6, w); c.fillRect(30, 0, 3, w); }, { repeat: [8, 3] });
-  const uph = phys('#ffffff', 0.85, 0, { map: stripe, sheen: 0.5, sheenColor: '#fff5d0' });
   for (const s of [-1, 1]) {
     const so = new THREE.Group(); so.position.set(s * 11, FLOOR, 0); g.add(so);
     mesh(new RoundedBoxGeometry(5, 2.4, 15, 3, 0.4), uph, { y: 1.8, parent: so });
@@ -224,10 +230,11 @@ export function buildOval() {
     group: g,
     background: new THREE.Color('#2a2118'),
     exposure: 1.05,
-    board: { style: 'wood', light: '#dcbc8c', dark: '#6a3d20', lightVein: '#8a6a40', darkVein: '#2a140a', border: '#3d1d0f', borderStyle: 'wood', borderVein: '#120804', trim: '#d1ad57', letters: '#e6c987', frame: '#2f150a', roughness: 0.32, clearcoat: 0.9, seed: 21 },
+    board: { style: 'wood', light: '#dcbc8c', dark: '#6a3d20', lightVein: '#8a6a40', darkVein: '#2a140a', border: '#3d1d0f', borderStyle: 'wood', borderVein: '#120804', trim: '#d1ad57', letters: '#f2d690', frame: '#9c6a55', roughness: 0.32, clearcoat: 0.9, seed: 21,
+      lightTex: 'white_maple_veneer', darkTex: 'black_walnut_veneer_01', borderTex: 'rosewood_veneer1', borderTint: '#9c6a55', darkTint: '#7a5844', normalScale: 0.45, crop: 0.28 },
     pieces: {
-      white: { color: '#e8dcc4', roughness: 0.34, clearcoat: 0.7, clearcoatRoughness: 0.2, sheen: 0.3, sheenColor: '#fff8e6' },
-      black: { color: '#1c1410', roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.08 },
+      white: { tex: 'white', color: '#fff7ea', roughness: 0.55, clearcoat: 0.6, clearcoatRoughness: 0.15, sheen: 0.2, sheenColor: '#fff8e6' },
+      black: { tex: 'black', color: '#ffffff', roughness: 0.5, clearcoat: 0.8, clearcoatRoughness: 0.1 },
     },
     update(t) {
       fireLight.intensity = 50 + Math.sin(t * 13) * 8 + Math.sin(t * 7.3) * 6;

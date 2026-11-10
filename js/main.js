@@ -47,17 +47,20 @@ function renderVenueUI() {
   $$('[data-v]').forEach((b) => b.addEventListener('click', () => setVenue(b.dataset.v)));
 }
 
-function setVenue(key, first = false) {
+async function setVenue(key, first = false) {
   if (!VENUES[key] || (key === S.venue && !first)) return;
   S.venue = key; store.set('venue', key);
   renderVenueUI();
   const L = $('#loading'); L.classList.remove('gone');
-  setTimeout(() => {
-    try { board.setVenue(key); } catch (e) { console.error(e); toast('Could not build that venue: ' + e.message); }
-    if (first) board.setPosition(S.game.board());
-    L.classList.add('gone');
-    if (sound.ctx) sound.ambience(key);
-  }, 30);
+  $('#loadingText').textContent = first ? 'Setting the board…' : `Travelling to ${VENUES[key].name}…`;
+  await new Promise((r) => setTimeout(r, 30));
+  try {
+    if (first) await board.loadAssets();
+    await board.setVenue(key);
+  } catch (e) { console.error(e); toast('Could not build that venue: ' + e.message); }
+  if (first) board.setPosition(S.game.board(), captured());
+  if (S.venue === key) L.classList.add('gone');
+  if (sound.ctx) sound.ambience(key);
 }
 
 // ---------- game helpers ----------

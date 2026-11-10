@@ -1,6 +1,7 @@
 // Venue: on the deck of a sunken ocean liner, deep underwater.
 import * as THREE from 'three';
-import { canvasTex, std, phys, mesh, woodTex, softDot, rand } from './vutil.js';
+import { canvasTex, std, phys, mesh, softDot, rand } from './vutil.js';
+import { pbrMat } from './assets.js';
 
 const DECK = -4.4;
 
@@ -53,9 +54,17 @@ function fishGeometry() {
   return geo;
 }
 
-export function buildTitanic() {
+export async function buildTitanic() {
   const g = new THREE.Group(), r = rand(42);
-  const rust = std('#4f3526', 0.85, 0.35), rustDark = std('#2c211b', 0.9, 0.3), algae = std('#3c5a43', 0.95, 0.1);
+  // real photo-scanned materials (Poly Haven, CC0)
+  const [rust, rustDark, sandMat, deckMat, tableWood] = await Promise.all([
+    pbrMat('rusty_metal_02', { repeat: [1, 6], color: '#8a6a52', metalness: 0.4, roughness: 1 }),
+    pbrMat('rusty_metal_02', { repeat: [2, 2], color: '#4a3a30', metalness: 0.3, roughness: 1 }),
+    pbrMat('coast_sand_01', { repeat: [70, 70], color: '#b8b498', roughness: 1 }),
+    pbrMat('brown_planks_04', { repeat: [7, 5], color: '#9aa48e', roughness: 1 }),
+    pbrMat('wood_table_worn', { physical: true, repeat: [2, 2], color: '#8a7462', roughness: 0.9, clearcoat: 0.2 }),
+  ]);
+  const algae = std('#3c5a43', 0.95, 0.1);
   const hullMat = std('#1f1d1b', 0.8, 0.4, {
     map: canvasTex(512, 256, (c, w, h) => {
       c.fillStyle = '#25211d'; c.fillRect(0, 0, w, h);
@@ -69,15 +78,15 @@ export function buildTitanic() {
   const fp = floorGeo.attributes.position;
   for (let i = 0; i < fp.count; i++) { const x = fp.getX(i), z = fp.getZ(i); fp.setY(i, Math.sin(x * 0.05) * 1.2 + Math.cos(z * 0.07 + x * 0.02) * 1.5 + Math.sin(x * 0.21 + z * 0.17) * 0.3); }
   floorGeo.computeVertexNormals();
-  const sand = canvasTex(256, 256, (c, w) => { c.fillStyle = '#8a8466'; c.fillRect(0, 0, w, w); for (let i = 0; i < 3000; i++) { const v = 100 + r() * 80; c.fillStyle = `rgba(${v},${v - 6},${v - 30},0.5)`; c.fillRect(r() * w, r() * w, 1.5, 1.5); } }, { repeat: [40, 40] });
-  mesh(floorGeo, std('#ffffff', 1, 0, { map: sand }), { y: DECK - 9, cast: false, parent: g });
+
+  mesh(floorGeo, sandMat, { y: DECK - 9, cast: false, parent: g });
 
   // deck and the old table under the board
-  const deckTex = woodTex('#5b5546', '#1f2420', { planks: 10, repeat: [6, 4], seed: 9 });
+
   const deck = new THREE.Group(); deck.rotation.z = 0.025; deck.rotation.x = -0.012; g.add(deck);
-  mesh(new THREE.BoxGeometry(70, 1, 44), std('#ffffff', 0.95, 0, { map: deckTex }), { y: DECK - 0.5, cast: false, parent: deck });
-  mesh(new THREE.BoxGeometry(70, 8, 44), hullMat, { y: DECK - 5.2, cast: false, parent: deck });
-  const tableWood = phys('#3b2a1d', 0.6, 0, { clearcoat: 0.3 });
+  mesh(new THREE.BoxGeometry(70, 1, 44), deckMat, { y: DECK - 0.5, cast: false, parent: deck });
+  mesh(new THREE.BoxGeometry(70, 8, 44), rustDark, { y: DECK - 5.2, cast: false, parent: deck });
+
   mesh(new THREE.BoxGeometry(14.2, 0.6, 11.6), tableWood, { y: -0.62, parent: g });
   mesh(new THREE.BoxGeometry(13.4, 0.8, 10.8), tableWood, { y: -1.2, parent: g });
   for (const [x, z] of [[-6.2, -4.9], [6.2, -4.9], [-6.2, 4.9], [6.2, 4.9]]) mesh(new THREE.CylinderGeometry(0.4, 0.3, 3.6, 12), tableWood, { x, y: DECK + 1.8, z, parent: g });
@@ -162,10 +171,11 @@ export function buildTitanic() {
     background: new THREE.Color('#032033'),
     fog: new THREE.FogExp2('#05304a', 0.026),
     exposure: 1.0,
-    board: { style: 'marble', light: '#a9b9ab', dark: '#203a3a', lightVein: '#5f7c74', darkVein: '#0f2323', border: '#3e3022', borderStyle: 'wood', borderVein: '#0c0804', trim: '#b38d55', letters: '#dcbf86', frame: '#2d2218', frameMetal: 0.2, roughness: 0.35, clearcoat: 0.6, seed: 77 },
+    board: { style: 'marble', light: '#a9b9ab', dark: '#203a3a', lightVein: '#5f7c74', darkVein: '#0f2323', border: '#3e3022', borderStyle: 'wood', borderVein: '#0c0804', trim: '#b38d55', letters: '#dcbf86', frame: '#7a6a58', frameMetal: 0.2, roughness: 0.35, clearcoat: 0.6, seed: 77,
+      lightTex: 'marble_01', darkTex: 'marble_01', borderTex: 'wood_table_worn', lightTint: '#bfd0c4', darkTint: '#2a4b49', borderTint: '#8a7a66', normalScale: 0.7 },
     pieces: {
-      white: { color: '#eef4ee', roughness: 0.18, clearcoat: 1, sheen: 1, sheenColor: '#a6e8ff', envIntensity: 1.3 },
-      black: { color: '#2f5c4f', roughness: 0.38, metalness: 0.75, clearcoat: 0.3, envIntensity: 1.4 },
+      white: { tex: 'white', color: '#f3fbf6', roughness: 0.35, clearcoat: 1, sheen: 1, sheenColor: '#a6e8ff', iridescence: 0.6, envIntensity: 1.3 },
+      black: { tex: 'white', color: '#5d7f6c', roughness: 0.7, metalness: 0.8, clearcoat: 0.2, envIntensity: 1.4 },
     },
     update(t, dt) {
       acc += dt; if (acc > 0.07) { acc = 0; fi = (fi + 1) % frames.length; sun.map = frames[fi]; }

@@ -6,8 +6,16 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { pieceGeometries } from './pieces.js';
 import { VENUES } from './venues.js';
+import { loadPieces, setMaxAnisotropy, image as texImage, pbrMat } from './assets.js';
+
+// Seam-free regions (in 1024px coords) inside each tile of tiled stone textures, so a square never shows grout.
+const STONE_TILES = {
+  marble_01: [[22, 4, 348, 206], [354, 4, 660, 206], [666, 4, 1020, 206], [64, 218, 473, 452], [478, 218, 708, 452], [714, 218, 1020, 452],
+    [4, 462, 312, 695], [318, 462, 602, 695], [608, 462, 934, 695], [70, 705, 318, 1018], [324, 705, 576, 1018], [582, 705, 834, 1018], [840, 705, 1020, 1018]],
+};
 
 const FILES = 'abcdefgh';
 export const TABLE_Y = -0.32; // venues put a surface here (board base + captured pieces)
@@ -91,6 +99,66 @@ function makeBoardTexture(skin, aniso) {
   return t;
 }
 
+async function boardImages(skin) {
+  const get = (id) => (id ? Promise.all([texImage(id, 'diff'), texImage(id, 'nor')]) : Promise.resolve([null, null]));
+  const [light, dark, border] = await Promise.all([get(skin.lightTex), get(skin.darkTex), get(skin.borderTex)]);
+  return { light, dark, border };
+}
+
+// Board top built from real photo textures: colour map + matching normal map (wood grain / stone relief).
+function makeBoardMaps(skin, imgs, aniso) {
+  const N = 2048, B = N * (0.6 / 9.2), S = (N - 2 * B) / 8, rand = rng(skin.seed || 7);
+  const canvas = () => { const c = document.createElement('canvas'); c.width = c.height = N; return c; };
+  const cd = canvas(), cn = canvas(), gd = cd.getContext('2d'), gn = cn.getContext('2d');
+  gn.fillStyle = '#8080ff'; gn.fillRect(0, 0, N, N);
+  const tint = (x, y, w, h, color) => {
+    if (!color) return;
+    gd.globalCompositeOperation = 'multiply'; gd.fillStyle = color; gd.fillRect(x, y, w, h);
+    gd.globalCompositeOperation = 'source-over';
+  };
+  // border: tile the border texture all over, squares go on top
+  const [bd, bn] = imgs.border;
+  if (bd) {
+    const T = N / 2.6;
+    for (let x = 0; x < N; x += T) for (let y = 0; y < N; y += T) { gd.drawImage(bd, x, y, T, T); if (bn) gn.drawImage(bn, x, y, T, T); }
+    tint(0, 0, N, N, skin.borderTint);
+  } else { gd.fillStyle = skin.border; gd.fillRect(0, 0, N, N); }
+  const crop = (img, id) => {
+    const k = img.width / 1024, tiles = STONE_TILES[id];
+    if (tiles) {
+      const [x0, y0, x1, y1] = tiles[Math.floor(rand() * tiles.length)].map((v) => v * k);
+      const size = Math.min(x1 - x0, y1 - y0) * (0.8 + rand() * 0.2);
+      return [x0 + rand() * (x1 - x0 - size), y0 + rand() * (y1 - y0 - size), size];
+    }
+    const size = img.width * (skin.crop || 0.3);
+    return [rand() * (img.width - size), rand() * (img.height - size), size];
+  };
+  for (let f = 0; f < 8; f++) for (let r = 0; r < 8; r++) {
+    const light = (f + r) % 2 === 1, x = B + f * S, y = B + (7 - r) * S;
+    const [d, n] = light ? imgs.light : imgs.dark, id = light ? skin.lightTex : skin.darkTex;
+    const [sx, sy, sz] = crop(d, id);
+    gd.drawImage(d, sx, sy, sz, sz, x, y, S + 0.5, S + 0.5);
+    if (n) { const k = n.width / d.width; gn.drawImage(n, sx * k, sy * k, sz * k, sz * k, x, y, S + 0.5, S + 0.5); }
+    tint(x, y, S + 0.5, S + 0.5, light ? skin.lightTint : skin.darkTint);
+    const v = (rand() - 0.5) * 0.08; // tiny per-square variation, like real inlaid squares
+    gd.fillStyle = v > 0 ? `rgba(255,255,255,${v})` : `rgba(0,0,0,${-v})`; gd.fillRect(x, y, S, S);
+  }
+  gd.strokeStyle = skin.trim; gd.lineWidth = 10; gd.strokeRect(B - 9, B - 9, 8 * S + 18, 8 * S + 18);
+  gd.lineWidth = 3; gd.strokeRect(B - 26, B - 26, 8 * S + 52, 8 * S + 52);
+  gd.fillStyle = skin.letters; gd.font = `600 ${Math.round(B * 0.42)}px Georgia, 'Times New Roman', serif`;
+  gd.textAlign = 'center'; gd.textBaseline = 'middle';
+  gd.shadowColor = 'rgba(0,0,0,0.5)'; gd.shadowBlur = 6;
+  for (let i = 0; i < 8; i++) {
+    gd.fillText(FILES[i].toUpperCase(), B + (i + 0.5) * S, N - B / 2);
+    gd.fillText(FILES[i].toUpperCase(), B + (i + 0.5) * S, B / 2);
+    gd.fillText(String(8 - i), B / 2, B + (i + 0.5) * S);
+    gd.fillText(String(8 - i), N - B / 2, B + (i + 0.5) * S);
+  }
+  const map = new THREE.CanvasTexture(cd); map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = aniso;
+  const normalMap = new THREE.CanvasTexture(cn); normalMap.colorSpace = THREE.NoColorSpace; normalMap.anisotropy = aniso;
+  return { map, normalMap };
+}
+
 function glowTexture(inner, outer = 'rgba(0,0,0,0)') {
   const c = document.createElement('canvas'); c.width = c.height = 128;
   const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
@@ -125,9 +193,11 @@ export class Board3D {
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(r.domElement);
+    setMaxAnisotropy(r.capabilities.getMaxAnisotropy());
+    this.scan = null; // photo-scanned piece set, once loaded
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 600);
+    this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 1000);
     this.camera.position.set(0, 9, 11);
     this.controls = new OrbitControls(this.camera, r.domElement);
     Object.assign(this.controls, { enablePan: false, enableDamping: true, dampingFactor: 0.08, minDistance: 7, maxDistance: 24, maxPolarAngle: 1.38, minPolarAngle: 0.12 });
@@ -159,8 +229,25 @@ export class Board3D {
       if (o.isLight && o.castShadow && o.shadow.map) { o.shadow.map.dispose(); o.shadow.map = null; o.shadow.mapSize.set(this.shadowSize, this.shadowSize); }
     });
     if (q === 'high') {
-      this.composer = new EffectComposer(r);
+      // multisampled target keeps edges smooth through the effects chain
+      this.composer = new EffectComposer(r, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
       this.composer.addPass(new RenderPass(this.scene, this.camera));
+      // ambient occlusion: soft contact shadows where pieces meet the board, in creases and corners
+      this.gtao = new GTAOPass(this.scene, this.camera, 256, 256);
+      this.gtao.updateGtaoMaterial({ radius: 0.55, distanceExponent: 2, thickness: 1.5, scale: 1.1, samples: 16 });
+      this.gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 5, rings: 2, samples: 16 });
+      this.gtao.blendIntensity = 0.9;
+      // GTAO only hides points/lines from its depth pass; glows, light shafts and highlight planes would
+      // otherwise read as solid walls and paint big dark wedges, so hide every see-through object too.
+      this.gtao.overrideVisibility = function () {
+        const cache = this._visibilityCache;
+        this.scene.traverse((o) => {
+          cache.set(o, o.visible);
+          const m = o.material;
+          if (o.isPoints || o.isLine || o.isSprite || (m && !Array.isArray(m) && (m.transparent || m.depthWrite === false))) o.visible = false;
+        });
+      };
+      this.composer.addPass(this.gtao);
       this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.22, 0.5, 0.93);
       this.composer.addPass(this.bloom);
       this.composer.addPass(new OutputPass());
@@ -187,18 +274,23 @@ export class Board3D {
   }
 
   // ---------- venue ----------
-  setVenue(key) {
+  async loadAssets() { this.scan = await loadPieces(); }
+
+  async setVenue(key) {
     const def = VENUES[key] || VENUES.oval;
     this.venueKey = key;
+    const token = (this._venueToken = (this._venueToken || 0) + 1);
+    const v = await def.build({ renderer: this.renderer, quality: this.quality });
+    if (token !== this._venueToken) { disposeTree(v.group); return; } // another venue was picked meanwhile
     if (this.venue) { this.scene.remove(this.venue.group); disposeTree(this.venue.group); }
     this.scene.fog = null; this.scene.background = null; this.scene.environment = null;
-    const v = (this.venue = def.build({ renderer: this.renderer, quality: this.quality }));
+    this.venue = v;
     this.scene.add(v.group);
     this.scene.background = v.background || null;
     this.scene.fog = v.fog || null;
     this.renderer.toneMappingExposure = v.exposure ?? 1;
     v.group.traverse((o) => { if (o.isLight && o.castShadow) o.shadow.mapSize.set(this.shadowSize, this.shadowSize); });
-    this._buildBoard(v.board);
+    await this._buildBoard(v.board);
     this._buildPieceMaterials(v.pieces);
     this._restyleMeshes();
     // reflections: capture the venue itself (without board/pieces) into an environment map
@@ -210,13 +302,17 @@ export class Board3D {
     this.scene.environment = this.envRT.texture;
   }
 
-  _buildBoard(skin) {
-    disposeTree(this.boardGroup); this.boardGroup.clear();
+  async _buildBoard(skin) {
     const aniso = this.renderer.capabilities.getMaxAnisotropy();
-    const frameMat = new THREE.MeshPhysicalMaterial({ color: skin.frame, roughness: skin.frameRough ?? 0.45, metalness: skin.frameMetal ?? 0, clearcoat: 0.6, clearcoatRoughness: 0.25 });
+    const imgs = skin.lightTex ? await boardImages(skin) : null;
+    const maps = imgs && imgs.light[0] && imgs.dark[0] ? makeBoardMaps(skin, imgs, aniso) : { map: makeBoardTexture(skin, aniso), normalMap: null };
+    const frameParams = { color: skin.frame, roughness: skin.frameRough ?? 0.45, metalness: skin.frameMetal ?? 0, clearcoat: 0.6, clearcoatRoughness: 0.25 };
+    const frameMat = skin.borderTex ? await pbrMat(skin.borderTex, { physical: true, repeat: [2, 2], ...frameParams }) : new THREE.MeshPhysicalMaterial(frameParams);
+    disposeTree(this.boardGroup); this.boardGroup.clear();
     const frame = new THREE.Mesh(new RoundedBoxGeometry(9.5, -TABLE_Y, 9.5, 4, 0.1), frameMat);
     frame.position.y = TABLE_Y / 2; frame.castShadow = true; frame.receiveShadow = true;
-    const topMat = new THREE.MeshPhysicalMaterial({ map: makeBoardTexture(skin, aniso), roughness: skin.roughness ?? 0.28, metalness: skin.metalness ?? 0, clearcoat: skin.clearcoat ?? 0.8, clearcoatRoughness: 0.12, envMapIntensity: skin.envIntensity ?? 1 });
+    const topMat = new THREE.MeshPhysicalMaterial({ ...maps, roughness: skin.roughness ?? 0.28, metalness: skin.metalness ?? 0, clearcoat: skin.clearcoat ?? 0.8, clearcoatRoughness: 0.12, envMapIntensity: skin.envIntensity ?? 1 });
+    if (maps.normalMap) topMat.normalScale.set(skin.normalScale ?? 0.6, skin.normalScale ?? 0.6);
     const top = new THREE.Mesh(new THREE.PlaneGeometry(9.2, 9.2).rotateX(-Math.PI / 2), topMat);
     top.position.y = 0.002; top.receiveShadow = true;
     this.boardTop = top;
@@ -225,8 +321,19 @@ export class Board3D {
 
   _buildPieceMaterials(skin) {
     if (this.pieceMats) Object.values(this.pieceMats).forEach((m) => m.dispose());
-    const mk = (s) => new THREE.MeshPhysicalMaterial({ color: s.color, roughness: s.roughness ?? 0.3, metalness: s.metalness ?? 0, clearcoat: s.clearcoat ?? 0.7, clearcoatRoughness: s.clearcoatRoughness ?? 0.15, sheen: s.sheen ?? 0, sheenColor: s.sheenColor || '#ffffff', envMapIntensity: s.envIntensity ?? 1, emissive: s.emissive || '#000000', emissiveIntensity: s.emissiveIntensity ?? 0 });
-    this.pieceMats = { w: mk(skin.white), b: mk(skin.black) };
+    const sc = this.scan?.tex;
+    const mk = (s, color) => {
+      const m = new THREE.MeshPhysicalMaterial({ color: s.color, roughness: s.roughness ?? 0.3, metalness: s.metalness ?? 0, clearcoat: s.clearcoat ?? 0.7, clearcoatRoughness: s.clearcoatRoughness ?? 0.15, sheen: s.sheen ?? 0, sheenColor: s.sheenColor || '#ffffff', envMapIntensity: s.envIntensity ?? 1, emissive: s.emissive || '#000000', emissiveIntensity: s.emissiveIntensity ?? 0, iridescence: s.iridescence ?? 0 });
+      if (sc) {
+        // scanned set: real stone colour (or a tinted copy of it), surface relief, roughness and crevice shading
+        m.map = sc[s.tex || (color === 'w' ? 'white' : 'black')];
+        m.normalMap = sc.nor; m.roughnessMap = sc.arm; m.aoMap = sc.arm;
+        m.normalScale.set(s.normalScale ?? 1, s.normalScale ?? 1);
+        if (s.scanRoughness != null) m.roughness = s.scanRoughness;
+      }
+      return m;
+    };
+    this.pieceMats = { w: mk(skin.white, 'w'), b: mk(skin.black, 'b') };
   }
 
   _restyleMeshes() {
@@ -235,14 +342,15 @@ export class Board3D {
 
   // ---------- pieces ----------
   _makePiece(type, color, sq = null) {
-    const m = new THREE.Mesh(pieceGeometries()[type], this.pieceMats[color]);
+    const m = new THREE.Mesh((this.scan?.geos || pieceGeometries())[type] || pieceGeometries()[type], this.pieceMats[color]);
     m.userData = { type, color, sharedGeo: true };
     m.castShadow = m.receiveShadow = true;
     if (type === 'n') {
       // face the centre of the board, turned a little toward the opponent, so the horse profile reads clearly
       const left = !sq || 'abcd'.includes(sq[0]), tilt = color === 'w' ? 0.45 : -0.45;
       m.rotation.y = left ? tilt : Math.PI - tilt;
-    } else m.rotation.y = Math.random() * Math.PI * 2;
+    } else if (this.scan) m.rotation.y = (color === 'w' ? 0 : Math.PI) + (Math.random() - 0.5) * 0.3;
+    else m.rotation.y = Math.random() * Math.PI * 2;
     return m;
   }
 

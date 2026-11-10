@@ -1,6 +1,7 @@
 // Venue: the torch balcony high above the harbor at sunset.
 import * as THREE from 'three';
-import { canvasTex, std, phys, mesh, keyLight, gradientSky, softDot, cloudTex, rand } from './vutil.js';
+import { canvasTex, std, phys, mesh, keyLight, softDot, rand } from './vutil.js';
+import { pbrMat, loadTex } from './assets.js';
 
 // The flame stands to the side of the board so neither player's camera is inside it.
 const BALC = -3.9, F = new THREE.Vector3(-15, 0, 0), RAIL_R = 24, WATER = -150;
@@ -51,15 +52,15 @@ function waterNormals(r) {
   return t;
 }
 
-export function buildLiberty() {
+export async function buildLiberty() {
   const g = new THREE.Group(), r = rand(1886);
-  const patina = std('#4f9580', 0.62, 0.35, {
-    map: canvasTex(256, 256, (c, w) => {
-      c.fillStyle = '#5aa18a'; c.fillRect(0, 0, w, w);
-      for (let i = 0; i < 1600; i++) { const v = r(); c.fillStyle = v > 0.5 ? `rgba(40,90,75,${r() * 0.35})` : `rgba(150,210,190,${r() * 0.3})`; c.fillRect(r() * w, r() * w, 2 + r() * 8, 2 + r() * 8); }
-      c.strokeStyle = 'rgba(30,70,60,0.5)'; c.lineWidth = 2; for (let x = 0; x <= w; x += 64) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x, w); c.stroke(); c.beginPath(); c.moveTo(0, x); c.lineTo(w, x); c.stroke(); }
-    }, { repeat: [6, 6] }),
-  });
+  // real photo-scanned materials (Poly Haven, CC0) and a real sunset sky
+  const [patina, granite, sky, skyInfo] = await Promise.all([
+    pbrMat('green_metal_rust', { repeat: [6, 6], color: '#86d8bd', metalness: 0.35, roughness: 0.95 }),
+    pbrMat('granite_tile', { repeat: [2, 2], color: '#d8d2ca', roughness: 0.8 }),
+    loadTex('assets/sky/sunset.webp', true),
+    fetch('assets/sky/sunset.json').then((r) => r.json()).catch(() => ({ sun: [0.53, 0.04, -0.85], horizon: '#776756' })),
+  ]);
   const gold = phys('#f0c35c', 0.22, 1, { emissive: '#ff9d2e', emissiveIntensity: 0.55, clearcoat: 0.5 });
 
   // balcony floor, torch cup and arm
@@ -88,18 +89,14 @@ export function buildLiberty() {
   const flameLight = new THREE.PointLight('#ffb24a', 70, 40, 1.5); flameLight.position.set(0, 9, 0); flame.add(flameLight);
 
   // pedestal table for the board
-  const granite = std('#77716a', 0.55, 0, {
-    map: canvasTex(256, 256, (c, w) => { c.fillStyle = '#8a847c'; c.fillRect(0, 0, w, w); for (let i = 0; i < 5000; i++) { const v = 60 + r() * 140; c.fillStyle = `rgba(${v},${v - 5},${v - 12},0.7)`; c.fillRect(r() * w, r() * w, 1.5, 1.5); } }, { repeat: [3, 3] }),
-  });
   mesh(new THREE.BoxGeometry(14.2, 0.6, 11.6), granite, { y: -0.62, parent: g });
   mesh(new THREE.BoxGeometry(13.4, 0.5, 10.8), granite, { y: -1.15, parent: g });
   mesh(new THREE.CylinderGeometry(2.4, 3.6, 2.6, 32), granite, { y: BALC + 1.3, parent: g });
 
   // sky, sun, water, clouds, skyline
-  const background = gradientSky([[0, '#0d1f42'], [0.28, '#2c5793'], [0.43, '#e79a62'], [0.5, '#ffd08d'], [0.515, '#c27d63'], [0.7, '#33465e'], [1, '#1e2a3a']]);
-  const sunDir = new THREE.Vector3(0.75, 0.16, -0.64).normalize();
-  const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: softDot('rgba(255,236,190,1)', 'rgba(255,160,80,0)', 128), blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
-  sunSprite.position.copy(sunDir).multiplyScalar(500); sunSprite.scale.set(160, 160, 1); g.add(sunSprite);
+  const background = sky; if (sky) sky.mapping = THREE.EquirectangularReflectionMapping;
+  // light comes from the sky photo's sun, raised a little so the board isn't lit at a grazing angle
+  const sunDir = new THREE.Vector3(skyInfo.sun[0], 0.34, skyInfo.sun[2]).normalize();
   const key = keyLight('#ffc187', 3.2, sunDir.clone().multiplyScalar(45), 10);
   g.add(key, key.target);
   g.add(new THREE.HemisphereLight('#ffd9b5', '#38506a', 1.0));
@@ -108,18 +105,12 @@ export function buildLiberty() {
   const waterMat = phys('#1d3c58', 0.12, 0.1, { normalMap: waterNormals(r), normalScale: new THREE.Vector2(0.6, 0.6), clearcoat: 1, clearcoatRoughness: 0.05 });
   const water = mesh(new THREE.PlaneGeometry(3000, 3000).rotateX(-Math.PI / 2), waterMat, { y: WATER, cast: false, receive: false, parent: g });
 
-  const cloudMat = new THREE.SpriteMaterial({ map: cloudTex(7), color: '#ffd7b8', transparent: true, depthWrite: false, opacity: 0.85 });
-  const clouds = [];
-  for (let i = 0; i < 16; i++) {
-    const s = new THREE.Sprite(cloudMat); const a = r() * Math.PI * 2, d = 260 + r() * 220;
-    s.position.set(Math.cos(a) * d, -70 + r() * 150, Math.sin(a) * d); s.scale.set(140 + r() * 120, 60 + r() * 40, 1);
-    s.userData = { a, d, sp: 0.003 + r() * 0.004 }; g.add(s); clouds.push(s);
-  }
+  const clouds = []; // real clouds are in the sky photo now
 
   const B = 90, bld = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), std('#232838', 0.8, 0.2, { emissive: '#ffffff', emissiveMap: windowsTex(r), emissiveIntensity: 1.4 }), B);
   const dummy = new THREE.Object3D();
   for (let i = 0; i < B; i++) {
-    const a = -2.35 + (i / B) * 1.25 + (r() - 0.5) * 0.02, d = 380 + r() * 90, h = 25 + Math.pow(r(), 2) * 120 + (i % 23 === 0 ? 70 : 0);
+    const a = -2.35 + (i / B) * 1.25 + (r() - 0.5) * 0.02, d = 560 + r() * 110, h = 30 + Math.pow(r(), 2) * 120 + (i % 23 === 0 ? 70 : 0);
     dummy.position.set(Math.cos(a) * d, WATER + h / 2, Math.sin(a) * d); dummy.scale.set(8 + r() * 12, h, 8 + r() * 12); dummy.rotation.y = r();
     dummy.updateMatrix(); bld.setMatrixAt(i, dummy.matrix);
   }
@@ -144,12 +135,13 @@ export function buildLiberty() {
   return {
     group: g,
     background,
-    fog: new THREE.Fog('#d9a27a', 160, 720),
+    fog: new THREE.Fog(skyInfo.horizon || '#776756', 180, 760),
     exposure: 1.0,
-    board: { style: 'marble', light: '#e6e0d4', dark: '#3a3b40', lightVein: '#9a958a', darkVein: '#121216', border: '#4f8f7c', borderStyle: 'metal', trim: '#e6b552', letters: '#f8db93', frame: '#3f7f6c', frameMetal: 0.5, frameRough: 0.45, roughness: 0.4, clearcoat: 0.45, seed: 1776 },
+    board: { style: 'marble', light: '#e6e0d4', dark: '#3a3b40', lightVein: '#9a958a', darkVein: '#121216', border: '#4f8f7c', borderStyle: 'metal', trim: '#e6b552', letters: '#f8db93', frame: '#8fd6bd', frameMetal: 0.4, frameRough: 0.6, roughness: 0.4, clearcoat: 0.45, seed: 1776,
+      lightTex: 'marble_01', darkTex: 'marble_01', borderTex: 'green_metal_rust', lightTint: '#f4efe4', darkTint: '#3c3d44', borderTint: '#9fe3cb', normalScale: 0.6 },
     pieces: {
-      white: { color: '#f2c45a', roughness: 0.2, metalness: 1, clearcoat: 0.4, envIntensity: 1.2 },
-      black: { color: '#3f8f79', roughness: 0.5, metalness: 0.45, clearcoat: 0.25, envIntensity: 1.1 },
+      white: { tex: 'white', color: '#ffd27a', roughness: 0.45, metalness: 1, clearcoat: 0.4, envIntensity: 1.2 },
+      black: { tex: 'white', color: '#5fae96', roughness: 0.9, metalness: 0.35, clearcoat: 0.2, envIntensity: 1.1 },
     },
     update(t, dt) {
       flameLight.intensity = 65 + Math.sin(t * 2.3) * 8;
